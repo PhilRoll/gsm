@@ -29,7 +29,7 @@
 // For a quick PS1 PAL/NTSC GSM selection:
 #define PAL_PREDEF_VMODE_IDX  1
 #define PAL_X_OFFSET -88
-#define PAL_Y_OFFSET 10
+#define PAL_Y_OFFSET 14
 #define NTSC_PREDEF_VMODE_IDX 0
 #define NTSC_X_OFFSET -48
 #define NTSC_Y_OFFSET 4
