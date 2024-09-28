@@ -29,8 +29,8 @@
 
 // For a quick PS1 PAL/NTSC GSM selection:
 #define PAL_PREDEF_VMODE_IDX  1
-#define PAL_X_OFFSET -92
-#define PAL_Y_OFFSET 8
+#define PAL_X_OFFSET -90
+#define PAL_Y_OFFSET 4
 #define NTSC_PREDEF_VMODE_IDX 0
 #define NTSC_X_OFFSET -48
 #define NTSC_Y_OFFSET 4
@@ -357,14 +357,15 @@ int main(void)
 
 	DeInitGSM();
 
-	// Inizializza il CDVD
-    cdvd_init();
+	/*
+	TO DO: 
 
+	// Inizializza il CDVD
     while (1) {
         // Controlla se un disco è presente
-        if (cdvd_check_disk()) {
+        if (CdIsInside()) {
             // Controlla il tipo di disco (region)
-            int region = PAL_PREDEF_VMODE_IDX;
+            int region = CheckRegion();
 
             if (region == PAL_PREDEF_VMODE_IDX) {
                 InitializeGSM(PAL_PREDEF_VMODE_IDX, PAL_X_OFFSET, PAL_Y_OFFSET);
@@ -373,11 +374,8 @@ int main(void)
                 InitializeGSM(NTSC_PREDEF_VMODE_IDX, NTSC_X_OFFSET, NTSC_Y_OFFSET);
             }
 
-            // Carica il disco
-            cdvd_read_disk();
-
-            // Esegui il disco
-            cdvd_run();
+            // Carica e avvia il disco
+            LoadAndRunDisc();
             break;  // Esci dal ciclo se il disco è stato avviato
         } 
 		
@@ -385,9 +383,14 @@ int main(void)
             // Gestisci il caso in cui non c'è disco
             printf("Nessun disco inserito. Attendi...\n");
             // Pausa di 1 secondo
-            DelayThread(1000000); // 1 secondo
+            sleep(1000000); // 1 secondo
         }
     }
+	*/
+
+	//da cancellare
+	InitializeGSM(PAL_PREDEF_VMODE_IDX, PAL_X_OFFSET, PAL_Y_OFFSET);
+	Exit(0);
 
 	return 0;
 }
