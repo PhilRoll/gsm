@@ -2,8 +2,7 @@
 
 ## Description
 
-- I wanted to make an automated GSM so it sets GS to 576p without me doing anything.
-- Tested on SCPH-50004 (Mechapwn to DTL-H50004) with RGB Scart cable and PCSX2 Nightly - v1.7.3229 Compiled on Aug 20 2022
+- I wanted to make an automated GSM for playing PS1 games with HDMI/Component cable
 
 ## Compiling and usage
 
@@ -15,7 +14,7 @@
 6. Now you can run the .ELF file on PCSX2 with Run ELF or on real hardware with wLaunchElf (On real hardware you have to use YPbPr output setting so it displays correctly and doesn't crash).
 
 ## Credits
-
+Thanks to [Sestain](https://github.com/sestain) for their fork of GSM.
+Thanks to [taka-tuos]() for linking Pre-built toolchain in their fork of GSM.
 Thanks to [taka-tuos](https://github.com/taka-tuos) for linking Pre-built toolchain in their fork of GSM.
-
 Thanks to [doctorxyz](https://github.com/doctorxyz), dlanor, [SP193](https://www.psx-place.com/members/sp193.19/), reprep for GSM.
