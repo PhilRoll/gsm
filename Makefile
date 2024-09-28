@@ -1,6 +1,6 @@
 .SILENT:
 
-PACKAGE = GSM
+PACKAGE = PS1_HDMI_FIX
 EE_BIN = $(PACKAGE).ELF
 EE_OBJS := gsm_engine.o gsm_api.o
 
