@@ -25,7 +25,6 @@
 #include <errno.h>        // For error handling
 #include <kernel.h>       // For kernel functions
 #include <loadfile.h>     // For ELF loading
-#include <cdvdman.h>
 
 // For a quick PS1 PAL/NTSC GSM selection:
 #define PAL_PREDEF_VMODE_IDX  1
