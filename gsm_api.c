@@ -11,20 +11,46 @@
 #
 */
 
-#include <kernel.h>
+#include <libcdvd.h>      // For CD/DVD functions such as sceCdDiskReady, sceCdGetDiskType, sceCdInit, etc.
+#include <loadfile.h>     // For functions like SifLoadElf, ExecPS2, etc.
+#include <kernel.h>       // For kernel management functions like sceKernel...
+#include <fileio.h>       // For file I/O operations
+#include <sifrpc.h>       // For Remote Procedure Call (RPC)
+#include <osd_config.h>   // For OSD (On-Screen Display) configurations
+#include <debug.h>        // For debug functions like scr_printf, scr_setXY
+#include <stdio.h>        // For standard input/output functions
+#include <stdlib.h>       // For standard library functions
+#include <string.h>       // For string manipulation functions
+#include <malloc.h>       // For dynamic memory allocation functions
+#include <errno.h>        // For error handling
+#include <kernel.h>       // For kernel functions
+#include <loadfile.h>     // For ELF loading
+#include <cdvdman.h>
 
-#define make_display_magic_number(dh, dw, magv, magh, dy, dx) \
-        (((u64)(dh)<<44) | ((u64)(dw)<<32) | ((u64)(magv)<<27) | \
-         ((u64)(magh)<<23) | ((u64)(dy)<<12)   | ((u64)(dx)<<0)     )
+// For a quick PS1 PAL/NTSC GSM selection:
+#define PAL_PREDEF_VMODE_IDX  1
+#define PAL_X_OFFSET -92
+#define PAL_Y_OFFSET 8
+#define NTSC_PREDEF_VMODE_IDX 0
+#define NTSC_X_OFFSET -48
+#define NTSC_Y_OFFSET 4
 
-#define MAKE_J(func)		(u32)( (0x02 << 26) | (((u32)func) / 4) )	// Jump (MIPS instruction)
+#define PS1_MODE_DISC 0x12
+
+
+
+#define make_display_magic_number(dh, dw, magv, magh, dy, dx)      \
+	(((u64)(dh) << 44) | ((u64)(dw) << 32) | ((u64)(magv) << 27) | \
+	 ((u64)(magh) << 23) | ((u64)(dy) << 12) | ((u64)(dx) << 0))
+
+#define MAKE_J(func) (u32)((0x02 << 26) | (((u32)func) / 4)) // Jump (MIPS instruction)
 
 // GS Registers
-#define GS_BGCOLOUR *((volatile unsigned long int*)0x120000E0)
+#define GS_BGCOLOUR *((volatile unsigned long int *)0x120000E0)
 
 // VMODE TYPES
-#define PS1_VMODE	1
-#define HDTV_VMODE	3
+#define PS1_VMODE 1
+#define HDTV_VMODE 3
 
 /// Non-Interlaced Mode
 #define GS_NONINTERLACED 0x00
@@ -37,18 +63,18 @@
 #define GS_FRAME 0x01
 
 /// DTV 480 Progressive Scan (720x480)
-#define GS_MODE_DTV_480P  0x50
+#define GS_MODE_DTV_480P 0x50
 /// DTV 1080 Interlaced (1920x1080)
 #define GS_MODE_DTV_1080I 0x51
 /// DTV 720 Progressive Scan (1280x720)
-#define GS_MODE_DTV_720P  0x52
+#define GS_MODE_DTV_720P 0x52
 /// DTV 576 Progressive Scan (720x576)
-#define GS_MODE_DTV_576P  0x53
+#define GS_MODE_DTV_576P 0x53
 /// DTV 1080 Progressive Scan (1920x1080)
-#define GS_MODE_DTV_1080P  0x54
+#define GS_MODE_DTV_1080P 0x54
 
 // Prototypes for External Functions
-#define _GSM_ENGINE_ __attribute__((section(".gsm_engine")))		// Resident section
+#define _GSM_ENGINE_ __attribute__((section(".gsm_engine"))) // Resident section
 
 extern void *Old_SetGsCrt _GSM_ENGINE_;
 
@@ -73,154 +99,157 @@ extern u32 Y_offset _GSM_ENGINE_;
 extern void Hook_SetGsCrt() _GSM_ENGINE_;
 extern void GSHandler() _GSM_ENGINE_;
 
-typedef struct predef_vmode_struct {
-	u8	category;
+typedef struct predef_vmode_struct
+{
+	u8 category;
 	char desc[34];
-	u8	interlace;
-	u8	mode;
-	u8	ffmd;
-	u64	display;
-	u64	syncv;
+	u8 interlace;
+	u8 mode;
+	u8 ffmd;
+	u64 display;
+	u64 syncv;
 } predef_vmode_struct;
 
-// Pre-defined vmodes 
+// Pre-defined vmodes
 // Some of following vmodes gives BSOD and/or freezing, depending on the console BIOS version, TV/Monitor set, PS2 cable (composite, component, VGA, ...)
 // Therefore there are many variables involved here that can lead us to success or fail depending on the circumstances above mentioned.
 //
 //	category	description								interlace			mode			 	ffmd	   	display							dh		dw		magv	magh	dy		dx		syncv
 //	--------	-----------								---------			----			 	----		----------------------------	--		--		----	----	--		--		-----
 static const predef_vmode_struct predef_vmode[8] = {
-	{  PS1_VMODE, "PS1 NTSC (HDTV 480p @60Hz)     ",	GS_NONINTERLACED,	GS_MODE_DTV_480P,	GS_FRAME,	(u64)make_display_magic_number(	 255,	2559,	0,		1,		 12,	736),	0x00C78C0001E00006},
-	{  PS1_VMODE, "PS1 PAL (HDTV 576p @50Hz)      ",	GS_NONINTERLACED,	GS_MODE_DTV_576P,	GS_FRAME,	(u64)make_display_magic_number(	 255,	2559,	0,		1,		 23,	756),	0x00A9000002700005},
-	{  HDTV_VMODE,"HDTV 480p @60Hz                ",	GS_NONINTERLACED,	GS_MODE_DTV_480P,	GS_FRAME, 	(u64)make_display_magic_number(	 479,	1279,	0,		1,		 51,	308),	0x00C78C0001E00006},
-	{  HDTV_VMODE,"HDTV 576p @50Hz                ",	GS_NONINTERLACED,	GS_MODE_DTV_576P,	GS_FRAME,	(u64)make_display_magic_number(	 575,	1279,	0,		1,		 64,	320),	0x00A9000002700005},
-	{  HDTV_VMODE,"HDTV 720p @60Hz                ",	GS_NONINTERLACED,	GS_MODE_DTV_720P,	GS_FRAME, 	(u64)make_display_magic_number(	 719,	1279,	1,		1,		 24,	302),	0x00AB400001400005},
-	{  HDTV_VMODE,"HDTV 1080i @60Hz               ",	GS_INTERLACED,		GS_MODE_DTV_1080I,	GS_FIELD, 	(u64)make_display_magic_number(	1079,	1919,	1,		2,		 48,	238),	0x0150E00201C00005},
-	{  HDTV_VMODE,"HDTV 1080i @60Hz Non Interlaced",	GS_INTERLACED,		GS_MODE_DTV_1080I,	GS_FRAME, 	(u64)make_display_magic_number(	1079,	1919,	0,		2,		 48,	238),	0x0150E00201C00005},
-	{  HDTV_VMODE,"HDTV 1080p @60Hz               ",	GS_NONINTERLACED,	GS_MODE_DTV_1080P,	GS_FRAME, 	(u64)make_display_magic_number(	1079,	1919,	1,		2,		 48,	238),	0x0150E00201C00005},
-}; //ends predef_vmode definition
+	{PS1_VMODE, "PS1 NTSC (HDTV 480p @60Hz)     ", GS_NONINTERLACED, GS_MODE_DTV_480P, GS_FRAME, (u64)make_display_magic_number(255, 2559, 0, 1, 12, 736), 0x00C78C0001E00006},
+	{PS1_VMODE, "PS1 PAL (HDTV 576p @50Hz)      ", GS_NONINTERLACED, GS_MODE_DTV_576P, GS_FRAME, (u64)make_display_magic_number(255, 2559, 0, 1, 23, 756), 0x00A9000002700005},
+	{HDTV_VMODE, "HDTV 480p @60Hz                ", GS_NONINTERLACED, GS_MODE_DTV_480P, GS_FRAME, (u64)make_display_magic_number(479, 1279, 0, 1, 51, 308), 0x00C78C0001E00006},
+	{HDTV_VMODE, "HDTV 576p @50Hz                ", GS_NONINTERLACED, GS_MODE_DTV_576P, GS_FRAME, (u64)make_display_magic_number(575, 1279, 0, 1, 64, 320), 0x00A9000002700005},
+	{HDTV_VMODE, "HDTV 720p @60Hz                ", GS_NONINTERLACED, GS_MODE_DTV_720P, GS_FRAME, (u64)make_display_magic_number(719, 1279, 1, 1, 24, 302), 0x00AB400001400005},
+	{HDTV_VMODE, "HDTV 1080i @60Hz               ", GS_INTERLACED, GS_MODE_DTV_1080I, GS_FIELD, (u64)make_display_magic_number(1079, 1919, 1, 2, 48, 238), 0x0150E00201C00005},
+	{HDTV_VMODE, "HDTV 1080i @60Hz Non Interlaced", GS_INTERLACED, GS_MODE_DTV_1080I, GS_FRAME, (u64)make_display_magic_number(1079, 1919, 0, 2, 48, 238), 0x0150E00201C00005},
+	{HDTV_VMODE, "HDTV 1080p @60Hz               ", GS_NONINTERLACED, GS_MODE_DTV_1080P, GS_FRAME, (u64)make_display_magic_number(1079, 1919, 1, 2, 48, 238), 0x0150E00201C00005},
+}; // ends predef_vmode definition
 
-u32 predef_vmode_size = 	sizeof( predef_vmode ) / sizeof( predef_vmode[0] );
+u32 predef_vmode_size = sizeof(predef_vmode) / sizeof(predef_vmode[0]);
 
-#define DI2	DIntr
-#define EI2	EIntr
+#define DI2 DIntr
+#define EI2 EIntr
 
-_GSM_ENGINE_ int ee_kmode_enter2() {
+_GSM_ENGINE_ int ee_kmode_enter2()
+{
 	u32 status, mask;
 
-	__asm__ volatile (
-		".set\tpush\n\t"		\
-		".set\tnoreorder\n\t"		\
-		"mfc0\t%0, $12\n\t"		\
-		"li\t%1, 0xffffffe7\n\t"	\
-		"and\t%0, %1\n\t"		\
-		"mtc0\t%0, $12\n\t"		\
+	__asm__ volatile(
+		".set\tpush\n\t"
+		".set\tnoreorder\n\t"
+		"mfc0\t%0, $12\n\t"
+		"li\t%1, 0xffffffe7\n\t"
+		"and\t%0, %1\n\t"
+		"mtc0\t%0, $12\n\t"
 		"sync.p\n\t"
-		".set\tpop\n\t" : "=r" (status), "=r" (mask));
+		".set\tpop\n\t" : "=r"(status), "=r"(mask));
 
 	return status;
 }
 
-_GSM_ENGINE_ int ee_kmode_exit2() {
+_GSM_ENGINE_ int ee_kmode_exit2()
+{
 	int status;
 
-	__asm__ volatile (
-		".set\tpush\n\t"		\
-		".set\tnoreorder\n\t"		\
-		"mfc0\t%0, $12\n\t"		\
-		"ori\t%0, 0x10\n\t"		\
-		"mtc0\t%0, $12\n\t"		\
-		"sync.p\n\t" \
-		".set\tpop\n\t" : "=r" (status));
+	__asm__ volatile(
+		".set\tpush\n\t"
+		".set\tnoreorder\n\t"
+		"mfc0\t%0, $12\n\t"
+		"ori\t%0, 0x10\n\t"
+		"mtc0\t%0, $12\n\t"
+		"sync.p\n\t"
+		".set\tpop\n\t" : "=r"(status));
 
 	return status;
 }
 
-_GSM_ENGINE_ void SetSyscall2(int number, void (*functionPtr)(void)) {
-	__asm__ __volatile__ (
-	".set noreorder\n"
-	".set noat\n"
-	"li $3, 0x74\n"
-    "add $4, $0, %0    \n"   // Specify the argument #1
-    "add $5, $0, %1    \n"   // Specify the argument #2
-   	"syscall\n"
-	"jr $31\n"
-	"nop\n"
-	".set at\n"
-	".set reorder\n"
-    :
-    : "r"( number ), "r"( functionPtr )
-    );
+_GSM_ENGINE_ void SetSyscall2(int number, void (*functionPtr)(void))
+{
+	__asm__ __volatile__(
+		".set noreorder\n"
+		".set noat\n"
+		"li $3, 0x74\n"
+		"add $4, $0, %0    \n" // Specify the argument #1
+		"add $5, $0, %1    \n" // Specify the argument #2
+		"syscall\n"
+		"jr $31\n"
+		"nop\n"
+		".set at\n"
+		".set reorder\n"
+		:
+		: "r"(number), "r"(functionPtr));
 }
 
-_GSM_ENGINE_ u32* GetROMSyscallVectorTableAddress(void) {
-	//Search for Syscall Table in ROM
+_GSM_ENGINE_ u32 *GetROMSyscallVectorTableAddress(void)
+{
+	// Search for Syscall Table in ROM
 	u32 i;
 	u32 startaddr;
-	u32* ptr;
-	u32* addr;
+	u32 *ptr;
+	u32 *addr;
 	startaddr = 0;
-	for (i = 0x1FF00000; i < 0x1FFFFFFF; i+= 4)
+	for (i = 0x1FF00000; i < 0x1FFFFFFF; i += 4)
 	{
-		if ( *(u32*)(i + 0) == 0x40196800 )
+		if (*(u32 *)(i + 0) == 0x40196800)
 		{
-			if ( *(u32*)(i + 4) == 0x3C1A8001 )
+			if (*(u32 *)(i + 4) == 0x3C1A8001)
 			{
 				startaddr = i - 8;
 				break;
 			}
 		}
 	}
-	ptr = (u32 *) (startaddr + 0x02F0);
-	addr = (u32*)((ptr[0] << 16) | (ptr[2] & 0xFFFF));
-	addr = (u32*)((u32)addr & 0x1fffffff);
-	addr = (u32*)((u32)addr + startaddr);
+	ptr = (u32 *)(startaddr + 0x02F0);
+	addr = (u32 *)((ptr[0] << 16) | (ptr[2] & 0xFFFF));
+	addr = (u32 *)((u32)addr & 0x1fffffff);
+	addr = (u32 *)((u32)addr + startaddr);
 	return addr;
 }
 
 _GSM_ENGINE_ void InitGSM(u32 interlace, u32 mode, u32 ffmd, u64 display, u64 syncv, u64 smode2, int dx_offset, int dy_offset, u8 skip_videos)
- {
+{
 
-	u32* ROMSyscallTableAddress;
+	u32 *ROMSyscallTableAddress;
 
 	// Update GSM params
 	DI2();
 	ee_kmode_enter2();
 
-	Target_INTERLACE		= interlace;
-	Target_MODE				= mode;
-	Target_FFMD				= ffmd;
-	Target_DISPLAY1			= display;
-	Target_DISPLAY2			= display;
-	Target_SYNCV			= syncv;
-	Target_SMODE2			= smode2;
-	X_offset				= dx_offset;		// X-axis offset -> Use it only when automatic adaptations formulas don't fit into your needs
-	Y_offset				= dy_offset;		// Y-axis offset -> Use it only when automatic adaptations formulas dont't fit into your needs
-	skip_videos_fix			= skip_videos ^ 1;	// Skip Videos Fix ------------> 0 = On, 1 = Off ; Default = 0 = On
-	
-	automatic_adaptation	= 0;				// Automatic Adaptation -> 0 = On, 1 = Off ; Default = 0 = On
-	DISPLAY_fix				= 0;				// DISPLAYx Fix ---------> 0 = On, 1 = Off ; Default = 0 = On
-	SMODE2_fix				= 0;				// SMODE2 Fix -----------> 0 = On, 1 = Off ; Default = 0 = On
-	SYNCV_fix				= 0;				// SYNCV Fix ------------> 0 = On, 1 = Off ; Default = 0 = On
+	Target_INTERLACE = interlace;
+	Target_MODE = mode;
+	Target_FFMD = ffmd;
+	Target_DISPLAY1 = display;
+	Target_DISPLAY2 = display;
+	Target_SYNCV = syncv;
+	Target_SMODE2 = smode2;
+	X_offset = dx_offset;			   // X-axis offset -> Use it only when automatic adaptations formulas don't fit into your needs
+	Y_offset = dy_offset;			   // Y-axis offset -> Use it only when automatic adaptations formulas dont't fit into your needs
+	skip_videos_fix = skip_videos ^ 1; // Skip Videos Fix ------------> 0 = On, 1 = Off ; Default = 0 = On
+
+	automatic_adaptation = 0; // Automatic Adaptation -> 0 = On, 1 = Off ; Default = 0 = On
+	DISPLAY_fix = 0;		  // DISPLAYx Fix ---------> 0 = On, 1 = Off ; Default = 0 = On
+	SMODE2_fix = 0;			  // SMODE2 Fix -----------> 0 = On, 1 = Off ; Default = 0 = On
+	SYNCV_fix = 0;			  // SYNCV Fix ------------> 0 = On, 1 = Off ; Default = 0 = On
 
 	ee_kmode_exit2();
 	EI2();
 
 	// Hook SetGsCrt
 	ROMSyscallTableAddress = GetROMSyscallVectorTableAddress();
-	Old_SetGsCrt = (void*)ROMSyscallTableAddress[2];
+	Old_SetGsCrt = (void *)ROMSyscallTableAddress[2];
 	SetSyscall2(2, &Hook_SetGsCrt);
 
 	// Remove all breakpoints (even when they aren't enabled)
-	__asm__ __volatile__ (
-	".set noreorder\n"
-	".set noat\n"
-	"li $k0, 0x8000\n"
-	"mtbpc $k0\n"			// All breakpoints off (BED = 1)
-	"sync.p\n"				// Await instruction completion
-	".set at\n"
-	".set reorder\n"
-	);
+	__asm__ __volatile__(
+		".set noreorder\n"
+		".set noat\n"
+		"li $k0, 0x8000\n"
+		"mtbpc $k0\n" // All breakpoints off (BED = 1)
+		"sync.p\n"	  // Await instruction completion
+		".set at\n"
+		".set reorder\n");
 
 	// Replace Core Debug Exception Handler (V_DEBUG handler) by GSHandler
 	DI2();
@@ -230,8 +259,7 @@ _GSM_ENGINE_ void InitGSM(u32 interlace, u32 mode, u32 ffmd, u64 display, u64 sy
 	ee_kmode_exit2();
 	EI2();
 
-	SetVCommonHandler(8, (void *)0x80000280);	//TPIIG Fix
-
+	SetVCommonHandler(8, (void *)0x80000280); // TPIIG Fix
 }
 
 /*---------------------------------------------------------*/
@@ -239,17 +267,17 @@ _GSM_ENGINE_ void InitGSM(u32 interlace, u32 mode, u32 ffmd, u64 display, u64 sy
 /*---------------------------------------------------------*/
 static inline void DeInitGSM(void)
 {
-	//Search for Syscall Table in ROM
+	// Search for Syscall Table in ROM
 	u32 i;
 	u32 KernelStart;
-	u32* Pointer;
-	u32* SyscallTable;
+	u32 *Pointer;
+	u32 *SyscallTable;
 	KernelStart = 0;
-	for (i = 0x1fc00000+0x300000; i < 0x1fc00000+0x3fffff; i+=4)
+	for (i = 0x1fc00000 + 0x300000; i < 0x1fc00000 + 0x3fffff; i += 4)
 	{
-		if ( *(u32*)(i+0) == 0x40196800 )
+		if (*(u32 *)(i + 0) == 0x40196800)
 		{
-			if ( *(u32*)(i+4) == 0x3c1a8001 )
+			if (*(u32 *)(i + 4) == 0x3c1a8001)
 			{
 				KernelStart = i - 8;
 				break;
@@ -258,74 +286,108 @@ static inline void DeInitGSM(void)
 	}
 	if (KernelStart == 0)
 	{
-		GS_BGCOLOUR = 0x00ffff;	// Yellow	
-		while (1) {;}
+		GS_BGCOLOUR = 0x00ffff; // Yellow
+		while (1)
+		{
+			;
+		}
 	}
-	Pointer = (u32 *) (KernelStart + 0x2f0);
-	SyscallTable = (u32*)((Pointer[0] << 16) | (Pointer[2] & 0xFFFF));
-	SyscallTable = (u32*)((u32)SyscallTable & 0x1fffffff);
-	SyscallTable = (u32*)((u32)SyscallTable + KernelStart);
-	
+	Pointer = (u32 *)(KernelStart + 0x2f0);
+	SyscallTable = (u32 *)((Pointer[0] << 16) | (Pointer[2] & 0xFFFF));
+	SyscallTable = (u32 *)((u32)SyscallTable & 0x1fffffff);
+	SyscallTable = (u32 *)((u32)SyscallTable + KernelStart);
+
 	DI();
 	ee_kmode_enter();
 	// Restore SetGsCrt (even when it isn't hooked)
-	SetSyscall(2, (void*)SyscallTable[2]);
+	SetSyscall(2, (void *)SyscallTable[2]);
 	// Remove all breakpoints (even when they aren't enabled)
-	__asm__ __volatile__ (
-	".set noreorder\n"
-	".set noat\n"
-	"li $k0, 0x8000\n"
-	"mtbpc $k0\n"			// All breakpoints off (BED = 1)
-	"sync.p\n"				// Await instruction completion
-	".set at\n"
-	".set reorder\n"
-	);
+	__asm__ __volatile__(
+		".set noreorder\n"
+		".set noat\n"
+		"li $k0, 0x8000\n"
+		"mtbpc $k0\n" // All breakpoints off (BED = 1)
+		"sync.p\n"	  // Await instruction completion
+		".set at\n"
+		".set reorder\n");
 	ee_kmode_exit();
 	EI();
 }
 
-//----------------------------------------------------------------------------
-int main(void)
-{   
-	// Other values: Value chosen by user (0-7)
-	int predef_vmode_idx = 3;
 
-	//----------------------------------------------------------------------------
-	//---------- Start of coding stuff ----------
+
+
+
+//PS1 Quick GSM selection
+static inline void InitializeGSM(int predef_vmode_idx, int x_offset, int y_offset)
+{
+
+	// Initialize the Graphics Synthesizer Mode
+	InitGSM(predef_vmode[predef_vmode_idx].interlace,
+			predef_vmode[predef_vmode_idx].mode,
+			predef_vmode[predef_vmode_idx].ffmd,
+			predef_vmode[predef_vmode_idx].display,
+			predef_vmode[predef_vmode_idx].syncv,
+			((predef_vmode[predef_vmode_idx].ffmd) << 1) | (predef_vmode[predef_vmode_idx].interlace),
+			x_offset, // X Offset
+			y_offset, // Y Offset
+			0);		  // Skip videos
+
+	// Call sceSetGsCrt syscall to apply the new video mode
+	__asm__ __volatile__(
+		"li  $3, 0x02\n"   // Syscall Number = 2 (sceGsCrt)
+		"add $4, $0, %0\n" // interlace
+		"add $5, $0, %1\n" // mode
+		"add $6, $0, %2\n" // ffmd
+		"syscall\n"		   // Perform the syscall
+		"nop\n"			   // nop for Branch delay slot
+		:
+		: "r"(predef_vmode[predef_vmode_idx].interlace),
+		  "r"(predef_vmode[predef_vmode_idx].mode),
+		  "r"(predef_vmode[predef_vmode_idx].ffmd));
+}
+
+
+
+//----------------------------------------------------------------------------
+// Main function
+int main(void)
+{
+
 
 	DeInitGSM();
 
-	InitGSM(predef_vmode[predef_vmode_idx].interlace, \
-					predef_vmode[predef_vmode_idx].mode, \
-					predef_vmode[predef_vmode_idx].ffmd, \
-					predef_vmode[predef_vmode_idx].display, \
-					predef_vmode[predef_vmode_idx].syncv, \
-					((predef_vmode[predef_vmode_idx].ffmd)<<1)|(predef_vmode[predef_vmode_idx].interlace), \
-					0, \
-					0, \
-					0); 
-					//XOffset
-					//YOffset
-					//Skip videos
+	// Inizializza il CDVD
+    cdvd_init();
 
-	// Call sceSetGsCrt syscall in order to "bite" the new video mode
-	__asm__ __volatile__(
-		"li  $3, 0x02\n"   // Syscall Number = 2 (sceGsCrt)
-		"add $4, $0, %0\n"   // interlace
-		"add $5, $0, %1\n"   // mode
-		"add $6, $0, %2\n"   // ffmd
+    while (1) {
+        // Controlla se un disco è presente
+        if (cdvd_check_disk()) {
+            // Controlla il tipo di disco (region)
+            int region = PAL_PREDEF_VMODE_IDX;
 
-		"syscall\n"			// Perform the syscall
-		"nop\n"				// nop for Branch delay slot
+            if (region == PAL_PREDEF_VMODE_IDX) {
+                InitializeGSM(PAL_PREDEF_VMODE_IDX, PAL_X_OFFSET, PAL_Y_OFFSET);
+            } 
+			else if (region == PAL_PREDEF_VMODE_IDX) {
+                InitializeGSM(NTSC_PREDEF_VMODE_IDX, NTSC_X_OFFSET, NTSC_Y_OFFSET);
+            }
 
-		:
-		:	"r" (predef_vmode[predef_vmode_idx].interlace), \
-			"r" (predef_vmode[predef_vmode_idx].mode), \
-			"r" (predef_vmode[predef_vmode_idx].ffmd)
-	);
+            // Carica il disco
+            cdvd_read_disk();
 
-	// Exit to PS2 Browser
-	Exit(0);
+            // Esegui il disco
+            cdvd_run();
+            break;  // Esci dal ciclo se il disco è stato avviato
+        } 
+		
+		else {
+            // Gestisci il caso in cui non c'è disco
+            printf("Nessun disco inserito. Attendi...\n");
+            // Pausa di 1 secondo
+            DelayThread(1000000); // 1 secondo
+        }
+    }
 
 	return 0;
 }
