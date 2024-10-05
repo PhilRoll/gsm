@@ -2,7 +2,9 @@
 
 ## Description
 
-- I wanted to make an automated GSM for playing PS1 games with HDMI/Component cable
+- Play your PS1 games on HD screens!
+ELF automatically searches for the PS1 disc region, then autoconfigures GSM for correct PS1 game viewing, then starts it.
+Compatible for HDMI Adapter/Component cable. 
 
 ## Compiling and usage
 
