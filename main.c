@@ -481,206 +481,6 @@ static unsigned char SelectedVMode;
 static void (*MainEPC)(void);
 static char ConsoleRegion=CONSOLE_REGION_INVALID, DiscRegion=DISC_REGION_INVALID;
 
-static u32 *ScanForPattern(u32 *start, u32 range, const u32 *pattern, u32 PatternSize, const u32 *mask)
-{
-	u32 i, *result, PatternOffset;
-
-	for(result=NULL,i=0; i<range; i+=4)
-	{
-		for(PatternOffset=0; PatternOffset<PatternSize; PatternOffset+=4)
-		{
-			if((start[(i+PatternOffset)/4]&mask[PatternOffset/4])!=pattern[PatternOffset/4]) break;
-		}
-
-		if(PatternOffset==PatternSize){	//Pattern found.
-			result=&start[i/4];
-			break;
-		}
-	}
-
-	return result;
-}
-
-static u64 *emu_SYNCHV_I=(u64*)0x70001920;
-static u64 *emu_SYNCHV_NI=(u64*)0x70001928;
-
-static int InitVideoModeParams(void)
-{	//Replacement function. Overrides the SYCHV parameters set by the driver.
-	u64 temp;
-
-	temp=0;	//It wasn't initialized in the Sony originals, but I hated the compiler warning.
-	if(SelectedVMode==3){	//PAL
-		*emu_SYNCHV_I=0x00A9000502101401;
-		*emu_SYNCHV_NI=0x00A9000502101404;
-	}
-	else{	//NTSC
-		temp=(temp&0xFFFFFC00)|3;
-		temp=(temp&0xFFF003FF)|0x1800;
-		temp=(temp&0xC00FFFFF)|0x01200000;
-		temp=(temp&0xFFFFFC00FFFFFFFF)|(0xC000L<<19);
-		temp=(temp&0xFFE003FFFFFFFFFF)|(0xF300L<<35);
-		temp=(temp&0x801FFFFFFFFFFFFF)|(0xC000L<<40);
-		*emu_SYNCHV_I=temp;
-
-		//Nearly a repeat of the block above.
-		temp=(temp&0xFFFFFC00)|4;
-		temp=(temp&0xFFF003FF)|0x1800;
-		temp=(temp&0xC00FFFFF)|0x01200000;
-		temp=(temp&0xFFFFFC00FFFFFFFF)|(0xC000L<<19);
-		temp=(temp&0xFFE003FFFFFFFFFF)|(0xF300L<<35);
-		temp=(temp&0x801FFFFFFFFFFFFF)|(0xC000L<<40);
-		*emu_SYNCHV_NI=temp;
-	}
-
-	return 0;
-}
-
-static void SetPS1DrvVideoMode(void *start, int region, int VideoMode)
-{
-	u32 *PatchLoc, *RetAddr;
-	//For NTSC consoles.
-	const static u32 VModeSetPatternNTSC[]={
-		0x24040000,	//addiu a0, zero, VideoMode
-		0x00661825,	//or v1, v1, a2
-		0xaf840000,	//sw a0, VideoModeParam(gp)
-	};
-	const static u32 VModeSetPatternMaskNTSC[]={
-		0xFFFF0000,
-		0xFFFFFFFF,
-		0xFFFF0000
-	};
-	//For PAL consoles.
-	const static u32 VModeSetPatternPAL[]={
-		0x24030000,	//addiu v1, zero, VideoMode
-		0x3c0400a9,	//lui a0, $00a9
-		0x34840005,	//ori a0, a0, $0005
-	};
-	const static u32 VModeSetPatternMaskPAL[]={
-		0xFFFF0000,
-		0xFFFFFFFF,
-		0xFFFFFFFF
-	};
-	const static u32 VModeSetRetPattern[]={
-		0x03e00008	//jr ra
-	};
-	const static u32 VModeSetRetPatternMask[]={
-		0xFFFFFFFF
-	};
-	const u32 *pattern, *mask;
-	u32 PatternSize;
-
-	if(region==CONSOLE_REGION_EUROPE){
-		pattern=VModeSetPatternPAL;
-		mask=VModeSetPatternMaskPAL;
-		PatternSize=sizeof(VModeSetPatternPAL);
-	}
-	else{
-		pattern=VModeSetPatternNTSC;
-		mask=VModeSetPatternMaskNTSC;
-		PatternSize=sizeof(VModeSetPatternNTSC);
-	}
-
-	if((PatchLoc=ScanForPattern(start, 0x20000, pattern, PatternSize, mask))!=NULL && (RetAddr=ScanForPattern(PatchLoc, 0x80, VModeSetRetPattern, sizeof(VModeSetRetPattern), VModeSetRetPatternMask))!=NULL){
-		*PatchLoc=((*PatchLoc)&0xFFFF0000)|(VideoMode&3);
-		*RetAddr=JMP((u32)&InitVideoModeParams);
-	}
-	else printf("SetPS1DrvVideoMode: error - pattern not found.\n");
-}
-
-static void ChangePS1DrvVideoMode(void){
-	SetPS1DrvVideoMode((void*)0x00200000, ConsoleRegion, SelectedVMode);
-
-	FlushCache(0);
-	FlushCache(2);
-}
-
-static void SetROMVERRegion(void *start, char region){
-	u32 *PatchLoc;
-	const static u32 ROMVERParserPattern[]={
-		0x93a20004,	//lbu v0, $0004(sp)
-		0x24030043,	//addiu v1, zero, $0043
-		0x00021600,	//sll v0, v0, 24
-		0x00022603	//sra v0, v0, 24
-	};
-	const static u32 ROMVERParserMask[]={
-		0xFFFFFFFF,
-		0xFFFFFFFF,
-		0xFFFFFFFF,
-		0xFFFFFFFF
-	};
-
-	printf("SetROMVERRegion: Region: %c\n", region);
-
-	if((PatchLoc=ScanForPattern(start, 0x20000, ROMVERParserPattern, sizeof(ROMVERParserPattern), ROMVERParserMask))!=NULL){
-		*PatchLoc=0x24020000|region;	//li $v0, region
-	}
-	else printf("SetROMVERRegion: error - pattern not found.\n");
-}
-
-static void ChangeROMVERRegion(void)
-{	/*	Cause the new PS1DRV program to "see" the desired region, instead of the letter in ROMVER.
-		This will also change the compatibility list used. */
-	char region;
-
-	switch(DiscRegion)
-	{
-		case DISC_REGION_USA:
-			region = 'A';
-			break;
-		case DISC_REGION_EUROPE:
-			region = 'E';
-			break;
-		default:
-			region = 'J';
-	}
-	SetROMVERRegion((void*)0x00200000, region);
-
-	FlushCache(0);
-	FlushCache(2);
-}
-
-static int HookUnpackFunction(void *start)
-{
-	u32 *PatchLoc;
-	int result;
-	const static u32 UnpackFuncPattern[]={	//FlushCache(0); FlushCache(2);
-		0x24030064,	//addiu v1, zero, $0064
-		0x0000202d,	//daddu a0, zero, zero
-		0x0000000c,	//syscall (00000)
-		0x24030064,	//addiu v1, zero, $0064
-		0x24040002,	//addiu a0, zero, $0002
-		0x0000000c	//syscall (00000)
-	};
-	const static u32 UnpackFuncPatternMask[]={
-		0xFFFFFFFF,
-		0xFFFFFFFF,
-		0xFFFFFFFF,
-		0xFFFFFFFF,
-		0xFFFFFFFF,
-		0xFFFFFFFF
-	};
-
-	if((PatchLoc=ScanForPattern(start, 0x1000, UnpackFuncPattern, sizeof(UnpackFuncPattern), UnpackFuncPatternMask))!=NULL)
-	{
-		PatchLoc[0]=0x3c020000|((u32)&ChangeROMVERRegion)>>16;		//lui $v0, &ChangeROMVERRegion
-		PatchLoc[1]=0x34420000|(((u32)&ChangeROMVERRegion)&0xFFFF);	//ori $v0, &ChangeROMVERRegion
-		PatchLoc[2]=0x0040f809;							//jalr $v0
-		PatchLoc[3]=0;								//nop
-		PatchLoc[4]=0;								//nop
-		PatchLoc[5]=0;								//nop
-		result=0;
-
-		FlushCache(0);
-		FlushCache(2);
-	}
-	else
-	{
-		printf("HookUnpackFunction: pattern not found. Not hooking.\n");
-		result=1;
-	}
-
-	return result;
-}
 
 static unsigned short int GetBootROMVersion(void)
 {
@@ -759,12 +559,6 @@ static int HasValidDiscInserted(int mode)
 	return result;
 }
 
-static void DelayIO(void){
-	int i;
-
-	for(i=0; i<24; i++) nopdelay();
-}
-
 
 static void InvokeSetGsCrt(void)
 {	/*	This is necessary because PS1DRV runs off the initial state that LoadExecPS2 leaves the console in.
@@ -809,24 +603,6 @@ static int GetDiscRegion(const char *path)
 	return region;
 }
 
-static void InitializeUserMemory(void *start, void *end)
-{
-	u8 *ptr;
-
-	//clear memory.
-	for (ptr = (u8*)start; ptr < (u8*)end; ptr += 64) {
-		asm (
-			"\tsq $0, 0(%0) \n"
-			"\tsq $0, 16(%0) \n"
-			"\tsq $0, 32(%0) \n"
-			"\tsq $0, 48(%0) \n"
-			:: "r" (ptr)
-		);
-	}
-
-	FlushCache(0);
-	FlushCache(2);
-}
 
 //pretty print
 const char* GetConsoleRegionString(int region) {
@@ -878,13 +654,15 @@ void run_program() {
                "====================================\n\n");
 
     done = 0;
-
     do {
         if ((DiscType = HasValidDiscInserted(1)) >= 0) {
             if (DiscType == 0) {
                 scr_printf("Reading disc...");
-                while (HasValidDiscInserted(1) == 0) { DelayIO(); }
-            } else {
+                while (HasValidDiscInserted(1) == 0) { 
+					sleep(1);
+				}
+            } 
+			else {
                 switch (DiscType) {
                     case SCECdPSCD:
                     case SCECdPSCDDA:
@@ -894,15 +672,25 @@ void run_program() {
                         scr_printf("Error! Please insert a PlayStation 1 game disc.\n");
                         sceCdStop();
                         sceCdSync(0);
-                        while (HasValidDiscInserted(1) > 0) { DelayIO(); }
+                        while (HasValidDiscInserted(1) > 0) { 
+							sleep(1);
+						}
                 }
             }
-        } else {
+        } 
+		else {
             scr_printf("No disc inserted. Please insert a PlayStation 1 game disc.\n");
-            while (HasValidDiscInserted(1) < 0) { DelayIO(); }
+            while (HasValidDiscInserted(1) < 0) { 
+				sleep(1);
+			}
         }
-    } while (!done);
+    } 
+	while (!done);
 
+	scr_clear();
+	scr_printf("\n\n"
+               "PS1 HDMI/Component FIX - by PhilRoll\n"
+               "====================================\n\n");
     scr_printf("Reading disc...\n");
 
     sceCdDiskReady(0);
@@ -921,7 +709,7 @@ void run_program() {
         scr_printf("Console: %s, Disc region: %s\n", GetConsoleRegionString(ConsoleRegion), GetDiscRegionString(DiscRegion));
 
         sleep(1);
-        scr_printf("Run game!!!\n");
+        scr_printf("Run game:\n");
         sleep(1);
 
         FlushCache(0);
@@ -946,6 +734,14 @@ void run_program() {
             } else {
                 // If the region is neither Europe nor USA, print an error and restart the program
                 scr_printf("Error: Unsupported disc region! Please insert a valid disc.\n");
+				scr_printf("Restart ELF in 3");
+				sleep(1);
+				scr_printf("..2");
+				sleep(1);
+				scr_printf("..1");
+				sleep(1);
+				scr_printf("..DONE");
+				scr_clear();
                 // Call the function to restart the program
                 run_program(); // Call run_program to restart
                 return; // Exit the current function
