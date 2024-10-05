@@ -39,10 +39,14 @@ Alternatively, you can compile the project using a Docker container that provide
    docker run -it -w /PS2DEV -v /path/to/your/source/folder:/PS2DEV --name ps2dev_v1_0 ps2dev/ps2dev:v1.0 sh
    ```
 
-   Replace `/path/to/your/source/folder` with the path to the folder where your source code is located. If you're on Windows, you can use the following command to make it user-agnostic:
-   
+   Replace `/path/to/your/folder` with the path to the folder where the source code is located. 
+```bash
+   docker run -it -w /PS2DEV -v /path/to/your/folder:/PS2DEV --name ps2dev_container ps2dev/ps2dev:v1.0 sh
+   ```
+
+   NB: If you are on Windows, you can use the following command to make it user-independent (in this example, I create a PS2DEV folder on the desktop, in which will be all the files
    ```bash
-   docker run -it -w /PS2DEV -v %USERPROFILE%/Desktop/PS2DEV:/PS2DEV --name ps2dev_v1_0 ps2dev/ps2dev:v1.0 sh
+   docker run -it -w /PS2DEV -v ${env:USERPROFILE}/Desktop/PS2DEV:/PS2DEV --name ps2dev_container ps2dev/ps2dev:v1.0 sh
    ```
 
 4. Once inside the container, install the necessary development tools and libraries:
