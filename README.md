@@ -2,9 +2,11 @@
 
 ## Description
 
-- Play your PS1 games on HD screens!
-ELF automatically searches for the PS1 disc region, then autoconfigures GSM for correct PS1 game viewing, then starts it.
-Compatible for HDMI Adapter/Component cable. 
+Play your PS1 games on modern TV sets! 
+- automatic disc region control
+- automatic GSM configuration for correct display of PS1 games
+- automatic disc start-up function
+- Compatible with HDMI adapter/component cable. 
 
 ## Compiling and usage
 
