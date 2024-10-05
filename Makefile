@@ -1,14 +1,13 @@
-.SILENT:
-
 PACKAGE = PS1_HDMI_FIX
 EE_BIN = $(PACKAGE).ELF
-EE_OBJS := gsm_engine.o gsm_api.o
-EE_LDFLAGS =  -nostartfiles -Tlinkfile	
-EE_INCS +=  -I$(PS2SDK)/ee/include -I$(PS2SDK)/iop/include -I$(PS2SDK)/ports/include -I$(GSKIT)/include -I$(GSKIT)/ee/dma/include -I$(GSKIT)/ee/gs/include -I$(GSKIT)/ee/toolkit/include
 
-EE_LIBS = -lmc -lpad -lfileXio -lpatches -ldebug -lc -lkernel -L$(GSKIT)/lib -lgskit -ldmakit
+EE_OBJS := gsm_engine.o main.o
 
-EE_LDFLAGS =  -nostartfiles -Tlinkfile -L$(PS2SDK)/ee/lib -L$(PS2SDK)/sbv/lib -s
+EE_INCS += -I$(GSKIT)
+
+EE_LIBS = -ldebug -lcdvd -lpadx -lmc -lhdd -lmf -lfileXio -lpatches -lpoweroff
+
+EE_LDFLAGS =  -nostartfiles -Tlinkfile
 
 #EE_LDFLAGS += -Xlinker -Map -Xlinker 'uncompressed $(PACKAGE).map'
 
@@ -31,7 +30,7 @@ run:
 	ps2client -h $(PS2_IP) execee host:$(PACKAGE).ELF
 
 line:
-	ee-addr2line -e 'uncompressed $(PACKAGE).ELF' $(ADDR)
+	ee-addr2line -e  $(PACKAGE).ELF' $(ADDR)
 
 reset:
 	ps2client -h $(PS2_IP) reset
