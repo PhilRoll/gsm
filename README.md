@@ -80,7 +80,8 @@ Alternatively, you can compile the project using a Docker container that provide
 
 
 ## Credits
-Thanks to [Sestain](https://github.com/sestain) for their fork of GSM.
-Thanks to [taka-tuos]() for linking Pre-built toolchain in their fork of GSM.
-Thanks to [taka-tuos](https://github.com/taka-tuos) for linking Pre-built toolchain in their fork of GSM.
-Thanks to [doctorxyz](https://github.com/doctorxyz), dlanor, [SP193](https://www.psx-place.com/members/sp193.19/), reprep for GSM.
+Thanks to:
+- [Sestain](https://github.com/sestain) for his GSM fork.
+- [SP193](https://www.psx-place.com/members/sp193.19/), reprep for GSM and PS1VModeNeg project.
+- [taka-tuos](https://github.com/taka-tuos) for linking Pre-built toolchain in their fork of GSM.
+- All people who supported me on "PS2 Scene Discord group.
